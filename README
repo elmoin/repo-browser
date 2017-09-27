@@ -1,0 +1,14 @@
+# Elmoin Github Repo Browser
+
+## Install
+```
+npm run reinstall
+```
+
+This does a clean (re)install of all npm and elm packages, plus a global elm install.
+
+## Serve locally
+
+```
+npm start
+```
