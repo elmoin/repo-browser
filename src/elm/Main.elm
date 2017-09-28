@@ -2,8 +2,10 @@ module Main exposing (..)
 
 import Html exposing (..)
 import Html.Attributes exposing (..)
-import Html.Events exposing (onInput)
+import Html.Events exposing (onInput, onBlur)
 import Http
+import Task
+import Dict exposing (Dict)
 import Json.Decode as Json exposing (Decoder)
 import Json.Decode.Pipeline as Json
 
@@ -32,21 +34,28 @@ type alias Repo =
     }
 
 
+type alias CoolHeaders =
+    Dict String String
+
+
 type alias Model =
     { input : String
     , repos : List Repo
+    , headers : CoolHeaders
     }
 
 
 type Msg
     = UpdateQuery String
-    | UpdateRepos (Result Http.Error (List Repo))
+    | UpdateRepos (Result Http.Error ( List Repo, CoolHeaders ))
+    | SubmitQuery
 
 
 initialModel : Model
 initialModel =
     { input = ""
     , repos = []
+    , headers = Dict.empty
     }
 
 
@@ -54,10 +63,13 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         UpdateQuery query ->
-            ( { model | input = query }, send query )
+            ( { model | input = query }, Cmd.none )
 
-        UpdateRepos (Ok repos) ->
-            ( { model | repos = repos }, Cmd.none )
+        SubmitQuery ->
+            ( model, send model )
+
+        UpdateRepos (Ok ( repos, headers )) ->
+            ( { model | repos = repos, headers = headers }, Cmd.none )
 
         UpdateRepos (Err error) ->
             let
@@ -67,9 +79,22 @@ update msg model =
                 ( model, Cmd.none )
 
 
-send : String -> Cmd Msg
-send user =
-    Http.send UpdateRepos (createRepoRequest user)
+send : Model -> Cmd Msg
+send model =
+    Task.attempt UpdateRepos <| repoTask model [] 1
+
+
+repoTask : Model -> List Repo -> Int -> Task.Task Http.Error ( List Repo, CoolHeaders )
+repoTask model prevRepos page =
+    createRepoRequest model page
+        |> Http.toTask
+        |> Task.andThen
+            (\( repos, headers ) ->
+                if List.length repos == 0 then
+                    Task.succeed ( prevRepos, headers )
+                else
+                    repoTask { model | headers = headers } (prevRepos ++ repos) (page + 1)
+            )
 
 
 repoDecoder : Decoder Repo
@@ -88,9 +113,30 @@ coolRepoDecoder =
         |> Json.required "stargazers_count" Json.int
 
 
-createRepoRequest : String -> Http.Request (List Repo)
-createRepoRequest user =
-    Http.get ("https://api.github.com/users/" ++ user ++ "/repos") (Json.list coolRepoDecoder)
+createRepoRequest : Model -> Int -> Http.Request ( List Repo, CoolHeaders )
+createRepoRequest model page =
+    Http.request
+        { method = "GET"
+        , headers =
+            model.headers
+                |> Dict.toList
+                |> List.filter
+                    (\( name, _ ) -> name == "content-type")
+                |> List.map
+                    (\( name, content ) ->
+                        Http.header name content
+                    )
+        , url = "https://api.github.com/users/" ++ model.input ++ "/repos?per_page=10&page=" ++ toString page
+        , body = Http.emptyBody
+        , expect = Http.expectStringResponse bodyDecoder
+        , timeout = Nothing
+        , withCredentials = False
+        }
+
+
+bodyDecoder : Http.Response String -> Result String ( List Repo, CoolHeaders )
+bodyDecoder { headers, body } =
+    Json.decodeString (Json.list coolRepoDecoder) body |> Result.map (\repos -> ( repos, headers ))
 
 
 view : Model -> Html Msg
@@ -107,7 +153,12 @@ view model =
     in
         div []
             [ text "Github User"
-            , input [ value model.input, onInput UpdateQuery ] []
+            , input
+                [ value model.input
+                , onInput UpdateQuery
+                , onBlur SubmitQuery
+                ]
+                []
             , br [] []
             , text model.input
             , div [] (List.map repoView model.repos)
