@@ -8,6 +8,7 @@ import Task
 import Dict exposing (Dict)
 import Json.Decode as Json exposing (Decoder)
 import Json.Decode.Pipeline as Json
+import Native.Blorgh
 
 
 main : Program Never Model Msg
@@ -53,17 +54,27 @@ type Msg
 
 initialModel : Model
 initialModel =
-    { input = ""
+    { input = readFromLocalStorage |> Maybe.withDefault ""
     , repos = []
     , headers = Dict.empty
     }
+
+
+readFromLocalStorage : Maybe String
+readFromLocalStorage =
+    Native.Blorgh.readFromLocalStorage "foo" "bar"
+
+
+storeInLocalStorage : String -> String
+storeInLocalStorage =
+    Native.Blorgh.storeInLocalStorage
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         UpdateQuery query ->
-            ( { model | input = query }, Cmd.none )
+            ( { model | input = Native.Blorgh.storeInLocalStorage query }, Cmd.none )
 
         SubmitQuery ->
             ( model, send model )
