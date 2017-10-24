@@ -1,4 +1,4 @@
-module Main exposing (..)
+port module Main exposing (..)
 
 import Html exposing (..)
 import Html.Attributes exposing (..)
@@ -6,25 +6,47 @@ import Html.Events exposing (onInput, onBlur)
 import Http
 import Task
 import Dict exposing (Dict)
-import Json.Decode as Json exposing (Decoder)
+import Json.Decode as Json exposing (Decoder, Value)
 import Json.Decode.Pipeline as Json
-import Native.Blorgh
+import Json.Encode as Encode
 
 
-main : Program Never Model Msg
+port requestLocalStorage : () -> Cmd msg
 
 
-
--- :  { init : (model, Cmd msg), update : msg -> model -> (model, Cmd msg), subscriptions : model -> Sub msg, view : model -> Html msg }
---    -> Program Never model msg
+port writeToPortPort : ( String, Value ) -> Cmd msg
 
 
+port localStorage : (Maybe String -> msg) -> Sub msg
+
+
+type PortCmd
+    = WriteToLocalStorage
+    | RequestFromLocalStorage
+
+
+writeToPort : PortCmd -> Value -> Cmd msg
+writeToPort cmd val =
+    writeToPortPort ( toString cmd, val )
+
+
+main : Program (Maybe String) Model Msg
 main =
-    program
-        { init = ( initialModel, Cmd.none )
+    programWithFlags
+        { init = \flags -> ( initialModel flags, Cmd.none )
         , view = view
         , update = update
-        , subscriptions = \model -> Sub.none
+        , subscriptions =
+            \_ ->
+                localStorage
+                    (\maybeString ->
+                        case maybeString of
+                            Nothing ->
+                                UpdateQuery "not a string"
+
+                            Just string ->
+                                UpdateQuery string
+                    )
         }
 
 
@@ -52,9 +74,9 @@ type Msg
     | SubmitQuery
 
 
-initialModel : Model
-initialModel =
-    { input = readFromLocalStorage |> Maybe.withDefault ""
+initialModel : Maybe String -> Model
+initialModel initialValue =
+    { input = initialValue |> Maybe.withDefault ""
     , repos = []
     , headers = Dict.empty
     }
@@ -74,13 +96,17 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         UpdateQuery query ->
-            ( { model | input = Native.Blorgh.storeInLocalStorage query }, Cmd.none )
+            ( { model | input = query }
+            , Cmd.none
+            )
 
         SubmitQuery ->
             ( model, send model )
 
         UpdateRepos (Ok ( repos, headers )) ->
-            ( { model | repos = repos, headers = headers }, Cmd.none )
+            ( { model | repos = repos, headers = headers }
+            , writeToPort WriteToLocalStorage (Encode.string <| Maybe.withDefault "" <| Dict.get "JWT" headers)
+            )
 
         UpdateRepos (Err error) ->
             let
